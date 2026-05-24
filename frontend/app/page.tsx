@@ -165,6 +165,7 @@ export default function Home() {
   };
 
   useEffect(() => {
+    if (!isUnlocked) return;
     fetchProfile();
     fetchSignals();
     fetchTradesAndStats();
@@ -176,7 +177,7 @@ export default function Home() {
       clearInterval(sigInterval);
       clearInterval(statsInterval);
     };
-  }, [apiBaseUrl]);
+  }, [apiBaseUrl, isUnlocked]);
 
   // Timer Effect
   useEffect(() => {
@@ -442,10 +443,12 @@ The 12-hour continuous test indicates a ${stats.total_pnl >= 0 ? 'STRONG POSITIV
       window.removeEventListener('resize', handleResize);
       chart.remove();
     };
-  }, [activeSymbol]);
+  }, [activeSymbol, isUnlocked]);
 
   // Live WebSocket Tick aggregation
   useEffect(() => {
+    if (!isUnlocked) return;
+    
     const wsUrl = apiBaseUrl.replace(/^http/, 'ws') + '/api/v1/ws/live';
     const ws = new WebSocket(wsUrl);
     
@@ -486,7 +489,7 @@ The 12-hour continuous test indicates a ${stats.total_pnl >= 0 ? 'STRONG POSITIV
     };
 
     return () => ws.close();
-  }, [activeSymbol, apiBaseUrl]);
+  }, [activeSymbol, apiBaseUrl, isUnlocked]);
 
   if (!isUnlocked) {
     return (
