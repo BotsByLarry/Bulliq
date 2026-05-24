@@ -32,6 +32,34 @@ interface Signal {
 }
 
 export default function Home() {
+  // Passcode Security State
+  const [isUnlocked, setIsUnlocked] = useState(false);
+  const [passcodeInput, setPasscodeInput] = useState('');
+  const [passcodeError, setPasscodeError] = useState('');
+
+  // Check sessionStorage for unlocked session
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const unlocked = sessionStorage.getItem('BULLIQ_UNLOCKED');
+      if (unlocked === 'true') {
+        setIsUnlocked(true);
+      }
+    }
+  }, []);
+
+  const handleUnlock = () => {
+    const MASTER_PASSCODE = 'BULLIQ2026';
+    if (passcodeInput.toUpperCase() === MASTER_PASSCODE) {
+      setIsUnlocked(true);
+      if (typeof window !== 'undefined') {
+        sessionStorage.setItem('BULLIQ_UNLOCKED', 'true');
+      }
+      setPasscodeError('');
+    } else {
+      setPasscodeError('INVALID DECRYPTION KEY. SECURITY GATE SECURED.');
+    }
+  };
+
   // Chat State
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -459,6 +487,66 @@ The 12-hour continuous test indicates a ${stats.total_pnl >= 0 ? 'STRONG POSITIV
 
     return () => ws.close();
   }, [activeSymbol, apiBaseUrl]);
+
+  if (!isUnlocked) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0B0F14] overflow-hidden">
+        
+        {/* Matrix/Cyberpunk subtle background grid */}
+        <div className="absolute inset-0 opacity-[0.03] pointer-events-none" style={{
+          backgroundImage: `radial-gradient(#00C896 1px, transparent 1px)`,
+          backgroundSize: '24px 24px'
+        }} />
+
+        <div className="glass-panel w-full max-w-md p-8 bg-gradient-to-b from-[#111827] to-[#0B0F14] border-[rgba(0,200,150,0.25)] shadow-[0_0_50px_rgba(0,200,150,0.15)] flex flex-col items-center gap-6 relative">
+          
+          {/* Glowing logo / Lock indicator */}
+          <div className="w-16 h-16 rounded-full bg-gradient-to-tr from-[#00C896] to-[#34F5C5] flex items-center justify-center shadow-[0_0_20px_rgba(0,200,150,0.4)] animate-pulse">
+            <Activity className="w-7 h-7 text-slate-950" />
+          </div>
+
+          <div className="flex flex-col items-center text-center">
+            <h2 className="font-extrabold text-lg text-slate-100 tracking-wider">BULLIQ INTEGRITY GATE</h2>
+            <p className="text-[10px] text-slate-400 mt-1 uppercase tracking-widest font-semibold text-[#00C896]">
+              Authorized Day-Trader Access Only
+            </p>
+          </div>
+
+          <div className="w-full flex flex-col gap-3">
+            <div className="flex flex-col gap-1.5">
+              <label className="text-slate-400 font-bold text-[10px] uppercase tracking-wider">Master Decryption Key</label>
+              <input 
+                type="password" 
+                placeholder="Enter passcode..."
+                value={passcodeInput}
+                onChange={(e) => setPasscodeInput(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleUnlock()}
+                className="glass-input p-3 text-center font-mono text-sm tracking-widest bg-slate-950 border-slate-800 text-white focus:border-[#00C896] focus:ring-[#00C896]"
+              />
+            </div>
+            
+            <button 
+              onClick={handleUnlock}
+              className="btn-primary w-full py-3 text-xs font-bold uppercase tracking-wider shadow-[0_0_12px_rgba(0,200,150,0.2)] mt-2"
+            >
+              Verify Credentials
+            </button>
+            
+            {passcodeError && (
+              <span className="text-[10px] text-center font-bold p-2 px-3 rounded bg-rose-950/40 text-rose-400 border border-rose-900/60 uppercase tracking-wider mt-2">
+                {passcodeError}
+              </span>
+            )}
+          </div>
+
+          <div className="text-[9px] text-slate-500 font-mono tracking-tight mt-2">
+            SHA-256 SECURED CLIENT SESSION
+          </div>
+
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex-1 p-6 flex flex-col lg:grid lg:grid-cols-12 gap-6 bg-[#0a0e17] overflow-y-auto max-h-[calc(100vh-70px)]">
