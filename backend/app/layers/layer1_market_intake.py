@@ -1,8 +1,12 @@
 import time
+import logging
+import random
 import numpy as np
 import pandas as pd
 from typing import Dict, List, Any
 from app.layers.pipeline_context import PipelineContext
+
+logger = logging.getLogger(__name__)
 
 class Layer1MarketIntake:
     """
@@ -16,12 +20,52 @@ class Layer1MarketIntake:
         self.candle_store_5m: Dict[str, List[dict]] = {}
         self.candle_store_15m: Dict[str, List[dict]] = {}
         
+    def _preseed_history(self, symbol: str, current_price: float):
+        logger.info(f"Pre-seeding historical tick data for {symbol} to initialize indicators...")
+        ticks = []
+        now = time.time()
+        
+        # Base volatility/spread configurations matching mock_connector
+        volatility = 0.0008 if "BTC" in symbol else 0.0003
+        spread = 1.0 if "BTC" in symbol else 0.5
+        
+        price = current_price
+        
+        # Generate 1500 historical ticks, spaced 15 seconds apart (~6.2 hours of history)
+        tick_interval = 15.0
+        total_ticks = 1500
+        
+        for i in range(total_ticks, 0, -1):
+            timestamp = now - (i * tick_interval)
+            
+            # Simple random walk to simulate past price
+            drift = random.uniform(-0.0001, 0.0001)
+            delta_pct = random.normalvariate(drift, volatility)
+            old_price = price
+            price = round(old_price * (1 + delta_pct), 2)
+            
+            ask = round(price + (spread / 2.0), 2)
+            bid = round(price - (spread / 2.0), 2)
+            volume = random.randint(100, 5000)
+            
+            ticks.append({
+                "symbol": symbol,
+                "timestamp": timestamp,
+                "price": price,
+                "bid": bid,
+                "ask": ask,
+                "volume": volume,
+                "last_price": old_price
+            })
+            
+        self.tick_store[symbol] = ticks
+
     async def process(self, tick: dict, user_id: int) -> PipelineContext:
         symbol = tick["symbol"]
         
         # Initialize store lists
         if symbol not in self.tick_store:
-            self.tick_store[symbol] = []
+            self._preseed_history(symbol, tick["price"])
             self.candle_store_5m[symbol] = []
             self.candle_store_15m[symbol] = []
             
