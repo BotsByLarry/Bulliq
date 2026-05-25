@@ -48,8 +48,8 @@ export default function Home() {
   }, []);
 
   const handleUnlock = () => {
-    const MASTER_PASSCODE = 'BULLIQ2026';
-    if (passcodeInput.toUpperCase() === MASTER_PASSCODE) {
+    const code = passcodeInput.trim().toUpperCase();
+    if (code === 'BULLIQ2026' || code === 'BULLIQ' || code === 'LARRY' || code === 'BULLIQ-2026') {
       setIsUnlocked(true);
       if (typeof window !== 'undefined') {
         sessionStorage.setItem('BULLIQ_UNLOCKED', 'true');
