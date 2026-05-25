@@ -29,3 +29,8 @@ class User(Base):
     
     # API credentials for individual brokers (stored encrypted in prod, plain for local dev/testing)
     broker_credentials = Column(JSON, default=dict)  # {"broker": "mock", "api_key": "...", ...}
+    
+    # Autonomous trading session controls
+    trading_session_active = Column(Boolean, default=False)
+    trading_session_end = Column(DateTime(timezone=True), nullable=True)
+

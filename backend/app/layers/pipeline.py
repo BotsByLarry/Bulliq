@@ -61,7 +61,32 @@ class DayTraderIntelligencePipeline:
         
         for user in users:
             try:
+                # Check for active session expiration
+                if user.trading_session_active and user.trading_session_end:
+                    from datetime import datetime, timezone
+                    now = datetime.now(timezone.utc)
+                    # Convert to aware timezone datetime if needed
+                    session_end = user.trading_session_end
+                    if session_end.tzinfo is None:
+                        session_end = session_end.replace(tzinfo=timezone.utc)
+                    if now > session_end:
+                        logger.info(f"Autonomous trading session for user {user.id} has EXPIRED. Resetting active status.")
+                        user.trading_session_active = False
+                        user.trading_session_end = None
+                        
+                        # Restore pre-session capital/risk if stored
+                        creds = user.broker_credentials or {}
+                        if "pre_session_capital" in creds:
+                            user.total_capital = creds["pre_session_capital"]
+                        if "pre_session_risk" in creds:
+                            user.risk_per_trade_percent = creds["pre_session_risk"]
+                            
+                        db.add(user)
+                        await db.commit()
+
+
                 # Query active trades count for risk limit checks
+
                 trades_result = await db.execute(
                     select(Trade).where(Trade.user_id == user.id, Trade.status == "open")
                 )
@@ -130,10 +155,10 @@ class DayTraderIntelligencePipeline:
                     db.add(db_signal)
                     await db.flush() # Flush to acquire db_signal.id
                     
-                    # Check if Alpaca Credentials are configured
+                    # Check if Alpaca Credentials are configured and autonomous session is active
                     is_alpaca_live = False
                     from app.core.config import settings
-                    if settings.ALPACA_API_KEY and settings.ALPACA_SECRET_KEY:
+                    if settings.ALPACA_API_KEY and settings.ALPACA_SECRET_KEY and user.trading_session_active:
                         try:
                             alpaca_order = self.alpaca.execute_bracket_order(
                                 symbol=context.symbol,

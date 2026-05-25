@@ -257,6 +257,140 @@ async def save_alpaca_credentials(keys: dict, db: AsyncSession = Depends(get_db)
         
     return {"status": "success", "account": acc}
 
+class StartSessionRequest(BaseModel):
+    duration_minutes: int
+    session_capital: float
+    risk_per_trade: float
+
+@app.post(f"{settings.API_V1_STR}/profile/start_session")
+async def start_autonomous_session(req: StartSessionRequest, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(User).where(User.email == "test@example.com"))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    user.trading_session_active = True
+    user.trading_session_end = now + timedelta(minutes=req.duration_minutes)
+    
+    # Store the pre-session values in broker credentials so we can restore them later, 
+    # and save the session start time to accurately track trades executed during this session
+    user.broker_credentials = {
+        **(user.broker_credentials or {}),
+        "pre_session_capital": user.total_capital,
+        "pre_session_risk": user.risk_per_trade_percent,
+        "session_start_time": now.isoformat()
+    }
+    
+    user.total_capital = req.session_capital
+    user.risk_per_trade_percent = req.risk_per_trade
+    
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+    logger.info(f"Started autonomous trading session for {req.duration_minutes} minutes. Capital: ${req.session_capital}, Risk: {req.risk_per_trade}%")
+    return {
+        "status": "success",
+        "trading_session_active": user.trading_session_active,
+        "trading_session_end": user.trading_session_end
+    }
+
+@app.post(f"{settings.API_V1_STR}/profile/stop_session")
+async def stop_autonomous_session(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(User).where(User.email == "test@example.com"))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    
+    user.trading_session_active = False
+    user.trading_session_end = None
+    
+    # Restore pre-session capital/risk if stored
+    creds = user.broker_credentials or {}
+    if "pre_session_capital" in creds:
+        user.total_capital = creds["pre_session_capital"]
+    if "pre_session_risk" in creds:
+        user.risk_per_trade_percent = creds["pre_session_risk"]
+        
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+    logger.info("Emergency stopped active autonomous trading session and restored profile limits.")
+    return {
+        "status": "success",
+        "trading_session_active": user.trading_session_active,
+        "trading_session_end": user.trading_session_end
+    }
+
+@app.post(f"{settings.API_V1_STR}/profile/force_signal")
+async def force_pipeline_signal(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(User).where(User.email == "test@example.com"))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="Profile not found")
+        
+    import random
+    symbol = random.choice(["CRYPTO:BTCUSDT", "NSE:RELIANCE"])
+    price = 67250.0 if "BTC" in symbol else 2450.0
+    
+    # Write Signal details
+    db_signal = Signal(
+        symbol=symbol,
+        market=symbol.split(":")[0],
+        direction="BUY",
+        entry_price=price,
+        stop_loss=round(price * 0.99, 2),
+        target_1=round(price * 1.02, 2),
+        target_2=round(price * 1.04, 2),
+        risk_reward_ratio=2.0,
+        confidence_score=85,
+        market_regime="trending_bullish",
+        explanation="Forced testing signal simulating high-probability technical breakout with volume expansion and positive options PCR confluence.",
+        invalidation_conditions="Close below EMA 21",
+        layers_telemetry={"forced": True}
+    )
+    db.add(db_signal)
+    await db.flush()
+    
+    # Check if Alpaca is configured and active
+    is_alpaca_live = False
+    if settings.ALPACA_API_KEY and settings.ALPACA_SECRET_KEY and user.trading_session_active:
+        try:
+            alpaca_order = alpaca_service.execute_bracket_order(
+                symbol=symbol,
+                qty=0.01 if "BTC" in symbol else 1.0, # Safe minimal trade quantity for test orders
+                side="buy",
+                take_profit_price=db_signal.target_1,
+                stop_loss_price=db_signal.stop_loss
+            )
+            if "id" in alpaca_order:
+                is_alpaca_live = True
+                logger.info(f"Forced Signal: Successfully executed LIVE Alpaca trade!")
+        except Exception as ex:
+            logger.error(f"Failed to submit active Alpaca bracket order: {str(ex)}")
+
+    db_trade = Trade(
+        user_id=user.id,
+        signal_id=db_signal.id,
+        symbol=symbol,
+        direction="BUY",
+        quantity=0.01 if "BTC" in symbol else 1.0,
+        entry_price=price,
+        stop_loss=db_signal.stop_loss,
+        take_profit=db_signal.target_1,
+        status="open",
+        is_mock=not is_alpaca_live
+    )
+    db.add(db_trade)
+    await db.commit()
+    
+    logger.info(f"FORCED SIGNAL & TRADE generated successfully.")
+    return {"status": "success", "symbol": symbol, "price": price, "is_alpaca_live": is_alpaca_live}
+
+
+
+
 @app.get(f"{settings.API_V1_STR}/signals")
 async def get_signals(limit: int = 20, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Signal).order_by(Signal.created_at.desc()).limit(limit))
@@ -328,6 +462,10 @@ async def chat_with_agent(chat_req: ChatRequest, db: AsyncSession = Depends(get_
         "2. Intraday style (scalping, day trading, or swing trading)\n"
         "3. Allowed risk per trade (e.g. 1% or 2%)\n"
         "4. Past emotional traps they fall into (FOMO, revenge trading, panic selling)\n\n"
+        "AUTONOMOUS TRADING SESSION COMMANDS:\n"
+        "- When the user explicitly requests you to trade for them, automate trading, start an autonomous session, or trade for a specific duration, you MUST agree and output the exact trigger tag: `[START_AUTO_TRADE:X]` where X is the duration in minutes. For example, if they say 'trade for me for 2 hours', output `[START_AUTO_TRADE:120]`. If they don't specify a duration, default to 60 minutes (`[START_AUTO_TRADE:60]`).\n"
+        "- Explain that you are initiating an autonomous day-trading session for the requested duration, executing live bracket orders via their linked Alpaca account using the 10-layer confluence pipeline.\n"
+        "- When the user requests you to 'stop trading', 'turn off auto trade', or trigger an emergency halt, you MUST output the exact trigger tag: `[STOP_AUTO_TRADE]`. Explain that you have emergency-stopped the autonomous trading session.\n\n"
         "CRITICAL BEHAVIOR:\n"
         "- Adopt a sharp, clean, institutional, supportive financial advisor persona.\n"
         "- If you do not know these details yet, ask for them politely and progressively in your first few turns. Guide them conversationally rather than throwing a large questionnaire.\n"
@@ -338,7 +476,38 @@ async def chat_with_agent(chat_req: ChatRequest, db: AsyncSession = Depends(get_
     )
     
     response_text = await llm_service.get_chat_response(chat_req.messages, system_prompt)
+    
+    # Parse tags in response to trigger DB session updates in real-time
+    if "[START_AUTO_TRADE:" in response_text:
+        try:
+            import re
+            match = re.search(r"\[START_AUTO_TRADE:(\d+)\]", response_text)
+            if match:
+                minutes = int(match.group(1))
+                from datetime import datetime, timedelta, timezone
+                now = datetime.now(timezone.utc)
+                if user:
+                    user.trading_session_active = True
+                    user.trading_session_end = now + timedelta(minutes=minutes)
+                    db.add(user)
+                    await db.commit()
+                    logger.info(f"Chat triggered AUTONOMOUS SESSION for {minutes} minutes.")
+        except Exception as e:
+            logger.error(f"Failed to parse START_AUTO_TRADE tag in chat: {str(e)}")
+            
+    elif "[STOP_AUTO_TRADE]" in response_text:
+        try:
+            if user:
+                user.trading_session_active = False
+                user.trading_session_end = None
+                db.add(user)
+                await db.commit()
+                logger.info("Chat triggered EMERGENCY STOP for autonomous session.")
+        except Exception as e:
+            logger.error(f"Failed to parse STOP_AUTO_TRADE tag in chat: {str(e)}")
+            
     return {"response": response_text}
+
 
 # --- WEBSOCKET CHANNEL ---
 
